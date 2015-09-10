@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-
+Objekt zum einfachen Interpolieren von Querschnitten bei gegebener Energie.
+Wird initialisiert mit Dateinamen einer Tabelle entsprechender Querschnitte.
+Ferner müssen die einzelnen Spalten mit Namen belegt werden, um bei Tabellen
+mit mehreren Spalten Verwechslungen auszuschließen.
 """
 import numpy as np
 
@@ -8,27 +11,24 @@ class interpolate(object):
     
     def __init__(self, query_column, data, headersize):
         self.data = np.loadtxt(data,skiprows=headersize)
-        self.qcolumn = query_column
+        self.colnames = {}
         
-    def interpolate(self, query_energy):
-        self.qenergy = query_energy
+    def set_name(self,column,name):
+        """
+        Sollte ausgeführt werden um von schlicht durchnummerierten Spalten zu
+        sprechenden Namen zu kommen. Namen werden in self.interpolate() ver-
+        wendet.
+        """
+        self.colnames[name] = column
         
-        self.find_neighbours()
-        return(self.find_xsect())
-        
-    def find_neighbours(self):
-        self.mask_low = self.data[:,0] <= self.qenergy
-        self.mask_high = self.data[:,0] >= self.qenergy
-        
-        self.nrgy = [self.data[:,0][self.mask_low][-1],
-                     self.data[:,0][self.mask_high][0]]
-                     
-        self.xsect = [self.data[:,1][self.mask_low][-1],
-                     self.data[:,1][self.mask_high][0]]
-                     
-    def find_xsect(self):
-        if self.xsect[0] == self.xsect[1]:
-            return self.xsect[0]
-        else:
-            return self.xsect[0] + (self.xsect[1] - self.xsect[0]) * \
-            (self.qenergy - self.nrgy[0])/(abs(self.nrgy[1] - self.nrgy[0]))
+    def interpolate(self, energy, y_col=1):
+        """
+        Sollte self.colnames leer sein, wird einfach nur die erste Spalte als
+        x- und die zweite Spalte als y-Wert genommen zum Interpolieren.
+        Falls self.colnames existiert, kann beliebig abgestimmt werden.
+        """
+        if self.colnames:
+            return np.interp(energy, self.data[:,0],
+                             self.data[:,self.colnames[y_col]])
+        return np.interp(energy, self.data[:,0],
+                             self.data[:,1])
