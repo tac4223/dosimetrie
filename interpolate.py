@@ -9,7 +9,11 @@ import numpy as np
 
 class interpolate(object):
     
-    def __init__(self, query_column, data, headersize):
+    def __init__(self, data, headersize=3):
+        """
+        Schlichte Initialisierung. Headersize gibt die Anzahl an Kopfzeilen an,
+        die übersprungen werden müssen um zum Beginn der Zahlenwerte zu kommen.
+        """
         self.data = np.loadtxt(data,skiprows=headersize)
         self.colnames = {}
         
