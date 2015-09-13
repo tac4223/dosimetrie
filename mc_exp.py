@@ -23,6 +23,9 @@ class particles(object):
     self.phi: Phi für alle Teilchen
     self.scatter: Streuquerschnitt, wird von extern verändert.
     self.photo: Querschnitt für Photoabsorption, von extern verändert.
+    self.total_x: Summe beider Querschnittswerte.
+    self.p_scatter: Streuwahrscheinlichkeit.
+    self.p_photo: Absorptionswahrscheinlichkeit.
 
     Funktionen:
     temp_roll_angles: Würfelt Streuwinkel aus.
@@ -45,6 +48,9 @@ class particles(object):
         self.phi = 1*self.mu
         self.scatter = np.zeros((number,1))
         self.photo = 1*self.scatter
+        self.total_x = 1*self.scatter
+        self.p_scatter = 1*self.scatter
+        self.p_photo = 1*self.scatter
 
     def temp_roll_angles(self):
         """
@@ -67,6 +73,13 @@ class particles(object):
         """
         self.energy[mask] = self.energy[mask] / (1 + (self.energy[mask]/511)
         * (1 - self.mu[mask]))
+
+    def mean_free(self, size):
+        """
+        Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
+        Werten für die Wirkungsquerschnittssumme.
+        """
+        return 1./self.total_x * np.log(np.random.rand(size,1))
 
 class mc_exp(object):
     """
@@ -132,4 +145,9 @@ class mc_exp(object):
 
         self.particles.photo[self.lead_mask] = self.water.interpolate(
         self.particles.energy[self.lead_mask],"photo")
+
+        self.particles.total_x = self.particles.photo + self.particles.scatter
+        self.particles.p_photo = self.particles.photo / self.particles.total_x
+        self.particles.p_scatter = self.particles.scatter /\
+        self.particles.total_x
 
