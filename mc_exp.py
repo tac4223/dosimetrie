@@ -40,46 +40,82 @@ class particles(object):
         spannendes. Alle Partikel werden bei [0,0,0] erzeugt, mit Richtung
         [0,0,0] und ohne berechnete Wirkungsquerschnitte oder Streuwinkel.
         """
+        self.count = number
         self.coords = np.zeros((number,3))
         self.direction = np.zeros((number,3))
-        self.energy = np.ones((number,1)) * initial_energy
-        self.weight = np.ones((number,1))
-        self.mu = np.zeros((number,1))
+        self.energy = np.ones(number) * initial_energy
+        self.weight = np.ones(number)
+        self.mu = np.zeros(number)
         self.phi = 1*self.mu
-        self.scatter = np.zeros((number,1))
+        self.scatter = np.zeros(number)
         self.photo = 1*self.scatter
         self.total_x = 1*self.scatter
         self.p_scatter = 1*self.scatter
         self.p_photo = 1*self.scatter
 
-    def temp_roll_angles(self):
+    def klein_nishina(self, mu, energy):
         """
-        Ermöglicht bequeme Erzeugung von Streuwinkeln für alle Partikel. Hier
-        muss noch nachgearbeitet werden, µ wird einfach nur gleichverteilt
-        erzeugt! Energieabhängigkeit fehlt völlig, ich kapier die fucking
-        Klein-Nishina-Formel noch nicht.
+        Gibt den Wert der KN-Formel zu gegebenem µ und E zurück. Vorfaktoren
+        weggelassen, das wäre nur unnötige Rechnerei.
         """
-        ###############################################
-        self.mu = 2 * np.random.rand(self.count,1) - 1
-        ### NOCH ZU ÄNDERN - NOCH ZU ÄNDERN - NOCH ZU Ä
-        ###############################################
+        y = energy/511.
+        return 1./(1 + y * (1 - mu))**2 * (1 + mu**2 + ((y**2)*(1 - mu)**2)/\
+        (1 + y*(1 - mu)))
 
-        self.phi = np.random.rand(self.count,1)*2*np.pi
-
-    def E_scatter(self, mask):
+    def guess_kn(self, count):
         """
-        Aktualisiert die Teilchenenergien nach einem Stoß. Maske gibt an welche
-        Teilchen gestreut wurden.
+        Rät µ und klein_nishina(µ), zwecks Verwendung beim Auswürfeln von µ per
+        Verwerfungsmethode. Da µ zwischen -1 und 1 liegt, der Funktionswert
+        der Klein-Nishina-Formel aber zwischen 0 und 2, lassen sich beide
+        auf einmal würfeln und anschließend eine Spalte um -1 verschieben.
         """
-        self.energy[mask] = self.energy[mask] / (1 + (self.energy[mask]/511)
-        * (1 - self.mu[mask]))
+        return 2 * np.random.rand(count,2) - np.array([1,0])
 
-    def mean_free(self, size):
+    def get_angles(self):
+        """
+        Beginnt mit guess_kn() in maximaler Größe. Anschließend werden
+        sukzessive alle Zeilen die nicht als korrekte Realisierung der
+        Zufallsvariablen in Frage kommen neu gewürfelt.
+        Zuletzt wird self.mu mit den gefundenen Werten angepasst, und self.phi
+        gewürfelt.
+        """
+
+        initial_guess = self.guess_kn(self.count)
+
+        while np.any((self.klein_nishina(initial_guess[:,0],self.energy) <
+        initial_guess[:,1])[0]):
+            mask = self.klein_nishina(initial_guess[:,0],self.energy) < \
+            initial_guess[:,1]
+            initial_guess[mask] = self.guess_kn(len(self.energy[mask]))
+
+        self.mu = initial_guess[:,0]
+        self.phi = np.random.rand(self.count)*2*np.pi
+
+    def E_scatter(self):
+        """
+        Aktualisiert die Teilchenenergien nach einem Stoß.
+        """
+        self.energy = self.energy / (1 + (self.energy/511) * (1 - self.mu))
+
+    def mean_free(self):
         """
         Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
         Werten für die Wirkungsquerschnittssumme.
         """
-        return 1./self.total_x * np.log(np.random.rand(size,1))
+        return 1./self.total_x * np.log(np.random.rand(len(self.total_x)))
+
+    def move(self):
+        self.coords += self.direction * self.mean_free()
+
+    def interact(self):
+        self.photo_mask = np.logical_not(self.scatter_mask)
+
+        self.weight[self.photo_mask] *= self.p_photo[self.photo_mask]
+
+        self.E_scatter(self.scatter_mask)
+
+    def direction(self):
+        pass
 
 class mc_exp(object):
     """
@@ -89,7 +125,6 @@ class mc_exp(object):
 
     Variablen:
     self.init_E: Anfangsenergie die allen Teilchen mitgegeben wird.
-    self.count: Anzahl zu erzeugender Teilchen.
 
     Instanzen:
     self.water: interpolate-Instanz mit Wasserdaten.
@@ -113,9 +148,8 @@ class mc_exp(object):
                 print("{0} ist keine gültige Zahl.".format(_))
 
         self.init_E = initial_energy
-        self.count = number_of_particles
 
-        self.particles = particles(self.count,self.init_E)
+        self.particles = particles(number_of_particles,self.init_E)
 
         self.water = ip.interpolate("CrossSectWasser.txt")
         self.water.set_name(1,"scatter")
