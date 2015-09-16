@@ -19,12 +19,17 @@ import numpy as np
 
 class interpolate(object):
 
-    def __init__(self, data, headersize=3):
+    def __init__(self, data, density=1, headersize=3):
         """
-        Schlichte Initialisierung. Headersize gibt die Anzahl an Kopfzeilen an,
-        die übersprungen werden müssen um zum Beginn der Zahlenwerte zu kommen.
+        Schlichte Initialisierung. Als Data wird der Dateiname eines Textfiles
+        übergeben, in dem die zu interpolierenden Daten enthalten sind.
+        Density kann für Wirkungsquerschnitte übergeben werden, Werte werden
+        damit multipliziert (default 1). Headersize gibt die Anzahl an
+        Kopfzeilen an, die übersprungen werden müssen um zum Beginn der
+        Zahlenwerte zu kommen.
         """
         self.data = np.loadtxt(data,skiprows=headersize)
+        self.data[:,1::] *= density
         self.colnames = {}
 
     def set_name(self,column,name):

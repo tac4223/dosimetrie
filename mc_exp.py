@@ -28,12 +28,11 @@ class particles(object):
     self.p_photo: Absorptionswahrscheinlichkeit.
 
     Funktionen:
-    temp_roll_angles: Würfelt Streuwinkel aus.
     E_scatter: Passt nach Streuung die Teilchenenergie an. Als Parameter muss
     boolean-Maske übergeben werden, die angibt bei welchen Teilchen eine
     Streuung stattfand.
     """
-    def __init__(self, number=1e5, initial_energy=140.5):
+    def __init__(self, number=1e5, initial_energy=.1405):
         """
         Fixiert alle aus den zwei Initialwerten abzuleitenden Werte zunächst
         mal in Objekteigenschaften, hier passiert eigentlich nichts
@@ -53,12 +52,26 @@ class particles(object):
         self.p_scatter = 1*self.scatter
         self.p_photo = 1*self.scatter
 
+    def initial_move(self):
+        """
+        Dient nur dazu, die Teilchen direkt nach der Erzeugung auf um eine
+        freie Weglänge zuföllig um die Quelle verteilte Positionen zu schießen.
+        """
+        angles = 2*np.random.rand(self.count,2) - np.array([1,0])
+        angles[:,1] *= np.pi
+
+        self.direction[:,0] = angles[:,0]
+        self.direction[:,1] = np.sqrt(1 - angles[:,0]**2) * np.cos(angles[:,1])
+        self.direction[:,2] = np.sqrt(1 - angles[:,0]**2) * np.sin(angles[:,1])
+
+        self.move()
+
     def klein_nishina(self, mu, energy):
         """
         Gibt den Wert der KN-Formel zu gegebenem µ und E zurück. Vorfaktoren
         weggelassen, das wäre nur unnötige Rechnerei.
         """
-        y = energy/511.
+        y = energy/.511
         return 1./(1 + y * (1 - mu))**2 * (1 + mu**2 + ((y**2)*(1 - mu)**2)/\
         (1 + y*(1 - mu)))
 
@@ -91,12 +104,6 @@ class particles(object):
         self.mu = initial_guess[:,0]
         self.phi = np.random.rand(self.count)*2*np.pi
 
-    def E_scatter(self):
-        """
-        Aktualisiert die Teilchenenergien nach einem Stoß.
-        """
-        self.energy = self.energy / (1 + (self.energy/511) * (1 - self.mu))
-
     def mean_free(self):
         """
         Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
@@ -105,17 +112,22 @@ class particles(object):
         return 1./self.total_x * np.log(np.random.rand(len(self.total_x)))
 
     def move(self):
-        self.coords += self.direction * self.mean_free()
+        self.coords += self.direction * \
+        np.reshape(self.mean_free(),(-1,1))
 
     def interact(self):
-        self.photo_mask = np.logical_not(self.scatter_mask)
+        photo_mask = np.random.rand(self.count) < self.p_photo
 
-        self.weight[self.photo_mask] *= self.p_photo[self.photo_mask]
+        self.weight[photo_mask] *= self.p_scatter[photo_mask]
 
-        self.E_scatter(self.scatter_mask)
+        self.E_scatter()
+        self.get_angles()
 
-    def direction(self):
-        pass
+    def E_scatter(self):
+        """
+        Aktualisiert die Teilchenenergien nach einem Stoß.
+        """
+        self.energy = self.energy / (1 + (self.energy/.511) * (1 - self.mu))
 
 class mc_exp(object):
     """
@@ -136,10 +148,12 @@ class mc_exp(object):
     für das jeweilig umgebende Material (Wasser innerhalb der Kugel, Blei außer-
     halb).
     """
-    def __init__(self, number_of_particles=1e5, initial_energy=140.5):
+    def __init__(self, number_of_particles=1e5, initial_energy=0.1405):
         """
         Input sanitizing, Erstellen der interpolate- und particle-Instanzen.
-
+        Dichte von Wasser und Blei wird absichtlich um eine Größenordnung zu
+        niedrig angegeben, um quasi implizit auf 1/mm für den
+        Wirkungsquerschnitt umzurechnen.
         """
         for _ in [number_of_particles,initial_energy]:
             try:
@@ -151,13 +165,14 @@ class mc_exp(object):
 
         self.particles = particles(number_of_particles,self.init_E)
 
-        self.water = ip.interpolate("CrossSectWasser.txt")
+        self.water = ip.interpolate("CrossSectWasser.txt",.1)
         self.water.set_name(1,"scatter")
         self.water.set_name(2,"photo")
-        self.lead = ip.interpolate("CrossSectBlei.txt")
+        self.lead = ip.interpolate("CrossSectBlei.txt",1.134)
         self.lead.set_name(1,"photo")
 
         self.update_xsect()
+        self.particles.initial_move()
 
     def update_xsect(self):
         """
@@ -185,3 +200,12 @@ class mc_exp(object):
         self.particles.p_scatter = self.particles.scatter /\
         self.particles.total_x
 
+    def ex_a(self):
+        x_mask = self.particles.coords[:,0] >= 0
+        print(x_mask)
+        y_mask = self.particles.coords[x_mask][:,1] <= self.particles.coords[x_mask][:,0]*(150.25/200)
+        print(y_mask)
+        z_mask = self.particles.coords[x_mask][:,2] <= self.particles.coords[x_mask][:,0]*(150.25/200)
+        print(z_mask)
+        self.ex_a = len(self.particles.coords[np.logical_and(x_mask,
+                         np.logical_and(y_mask,z_mask))])/self.particles.count
