@@ -52,6 +52,9 @@ class particles(object):
         self.p_scatter = 1*self.scatter
         self.p_photo = 1*self.scatter
 
+        self.K_tilde = np.zeros((self.count,3,3))
+        self.local_direction = np.zeros((self.count,3))
+
     def initial_move(self):
         """
         Dient nur dazu, die Teilchen direkt nach der Erzeugung auf um eine
@@ -59,12 +62,14 @@ class particles(object):
         """
         angles = 2*np.random.rand(self.count,2) - np.array([1,0])
         angles[:,1] *= np.pi
+        self.mu = angles[:,0]
 
         self.direction[:,0] = angles[:,0]
         self.direction[:,1] = np.sqrt(1 - angles[:,0]**2) * np.cos(angles[:,1])
         self.direction[:,2] = np.sqrt(1 - angles[:,0]**2) * np.sin(angles[:,1])
 
         self.move()
+        self.E_scatter()
 
     def klein_nishina(self, mu, energy):
         """
@@ -73,7 +78,7 @@ class particles(object):
         """
         y = energy/.511
         return 1./(1 + y * (1 - mu))**2 * (1 + mu**2 + ((y**2)*(1 - mu)**2)/\
-        (1 + y*(1 - mu)))
+            (1 + y*(1 - mu)))
 
     def guess_kn(self, count):
         """
@@ -96,10 +101,10 @@ class particles(object):
         initial_guess = self.guess_kn(self.count)
 
         while np.any((self.klein_nishina(initial_guess[:,0],self.energy) <
-        initial_guess[:,1])[0]):
-            mask = self.klein_nishina(initial_guess[:,0],self.energy) < \
-            initial_guess[:,1]
-            initial_guess[mask] = self.guess_kn(len(self.energy[mask]))
+            initial_guess[:,1])[0]):
+                mask = self.klein_nishina(initial_guess[:,0],self.energy) < \
+                    initial_guess[:,1]
+                initial_guess[mask] = self.guess_kn(len(self.energy[mask]))
 
         self.mu = initial_guess[:,0]
         self.phi = np.random.rand(self.count)*2*np.pi
@@ -109,25 +114,62 @@ class particles(object):
         Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
         Werten für die Wirkungsquerschnittssumme.
         """
-        return 1./self.total_x * np.log(np.random.rand(len(self.total_x)))
+        return -1./self.total_x * np.log(np.random.rand(len(self.total_x)))
 
     def move(self):
         self.coords += self.direction * \
-        np.reshape(self.mean_free(),(-1,1))
+            np.reshape(self.mean_free(),(-1,1))
 
     def interact(self):
         photo_mask = np.random.rand(self.count) < self.p_photo
 
         self.weight[photo_mask] *= self.p_scatter[photo_mask]
 
-        self.E_scatter()
         self.get_angles()
+        self.get_direction()
+        self.E_scatter()
 
     def E_scatter(self):
         """
         Aktualisiert die Teilchenenergien nach einem Stoß.
         """
         self.energy = self.energy / (1 + (self.energy/.511) * (1 - self.mu))
+
+    def get_direction(self):
+        """
+        Errechnet basierend auf den ausgewürfelten Werten für phi und mu einen
+        neuen Richtungsvektor für jedes Teilchen. Hierzu wird die Drehmatrix K~
+        für alle ermittelten lokalen Richtungsvektoren aufgestellt und die
+        Streurichtungsvektoren damit transformiert.
+        """
+        self.local_direction[:,0] = self.mu
+        self.local_direction[:,1] = np.sqrt(1 - self.mu**2) * np.cos(self.phi)
+        self.local_direction[:,2] = np.sqrt(1 - self.mu**2) * np.sin(self.phi)
+
+        self.x_mask = (np.abs(self.direction[:,0]) == 0) * \
+            (np.abs(self.direction[:,1]) == 0)
+
+        self.y_mask = (np.abs(self.direction[:,1]) == 0)
+        else_mask = np.logical_not(np.logical_or(self.x_mask,self.y_mask))
+
+
+        self.K_tilde[:,:,0] = self.direction
+        self.K_tilde[:,:,1][self.x_mask] = [1,0,0]
+        self.K_tilde[:,:,1][self.y_mask] = [0,1,0]
+
+        self.K_tilde[:,:,1][else_mask] = np.transpose(
+            np.array([1./self.direction[:,0],-1./self.direction[:,1],
+              np.zeros(self.count)]))
+
+        self.K_tilde[:,:,1] /= np.reshape(
+            np.sqrt(np.sum(self.K_tilde[:,:,1]**2,1)),(-1,1))
+
+        self.K_tilde[:,:,2] = np.reshape(np.cross(self.K_tilde[:,:,0],
+            self.K_tilde[:,:,1]),(-1,3))
+
+        self.direction = np.sum(self.K_tilde * np.reshape(self.local_direction,
+            (-1,3,1)),axis=1)
+
 
 class mc_exp(object):
     """
@@ -162,6 +204,7 @@ class mc_exp(object):
                 print("{0} ist keine gültige Zahl.".format(_))
 
         self.init_E = initial_energy
+        self.init_count = number_of_particles
 
         self.particles = particles(number_of_particles,self.init_E)
 
@@ -198,14 +241,13 @@ class mc_exp(object):
         self.particles.total_x = self.particles.photo + self.particles.scatter
         self.particles.p_photo = self.particles.photo / self.particles.total_x
         self.particles.p_scatter = self.particles.scatter /\
-        self.particles.total_x
+            self.particles.total_x
 
-    def ex_a(self):
-        x_mask = self.particles.coords[:,0] >= 0
-        print(x_mask)
-        y_mask = self.particles.coords[x_mask][:,1] <= self.particles.coords[x_mask][:,0]*(150.25/200)
-        print(y_mask)
-        z_mask = self.particles.coords[x_mask][:,2] <= self.particles.coords[x_mask][:,0]*(150.25/200)
-        print(z_mask)
-        self.ex_a = len(self.particles.coords[np.logical_and(x_mask,
-                         np.logical_and(y_mask,z_mask))])/self.particles.count
+    def move_particles(self):
+        """
+        Bewegt die Teilchen entsprechend der experimentellen Parameter weiter.
+        """
+
+        self.update_xsect()
+        self.particles.interact()
+        self.particles.move()

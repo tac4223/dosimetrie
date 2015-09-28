@@ -6,7 +6,6 @@ Testfile für die particle-Klasse.
 import mc_exp as mc
 import matplotlib.pyplot as plt
 
-test = mc.mc_exp(5)
-pars = [test.particles.coords, test.particles.direction, test.particles.scatter, test.particles.photo]
-for _ in pars:
-    print(_)
+test = mc.mc_exp(1e6)
+test.particles.get_angles()
+test.particles.get_direction()
