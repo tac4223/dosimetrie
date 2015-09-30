@@ -55,30 +55,47 @@ class particles(object):
         self.K_tilde = np.zeros((self.count,3,3))
         self.local_direction = np.zeros((self.count,3))
 
-    def initial_move(self):
+    def interact(self,particle_mask = None):
         """
-        Dient nur dazu, die Teilchen direkt nach der Erzeugung auf um eine
-        freie Weglänge zuföllig um die Quelle verteilte Positionen zu schießen.
+        Dient als Einstiegsfunktion für die Teilcheninteraktion. Übergibt allen
+        anderen Funktionen die passenden Parameter, ruft sie in der richtigen
+        Reihenfolge auf und wendet sie nur auf die in particle_mask gegebenen
+        Teilchen an.
         """
-        angles = 2*np.random.rand(self.count,2) - np.array([1,0])
-        angles[:,1] *= np.pi
-        self.mu = angles[:,0]
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
 
-        self.direction[:,0] = angles[:,0]
-        self.direction[:,1] = np.sqrt(1 - angles[:,0]**2) * np.cos(angles[:,1])
-        self.direction[:,2] = np.sqrt(1 - angles[:,0]**2) * np.sin(angles[:,1])
+        self.count = len(self.energy[particle_mask])
+        photo_mask = np.random.rand(self.count) < self.p_photo[particle_mask]
 
-        self.move()
-        self.E_scatter()
+        self.weight[particle_mask][photo_mask] *= \
+            self.p_scatter[particle_mask][photo_mask]
 
-    def klein_nishina(self, mu, energy):
+        self.get_angles()
+        self.get_direction()
+        self.E_scatter(particle_mask)
+
+    def get_angles(self, particle_mask = None):
         """
-        Gibt den Wert der KN-Formel zu gegebenem µ und E zurück. Vorfaktoren
-        weggelassen, das wäre nur unnötige Rechnerei.
+        Beginnt mit guess_kn() in maximaler Größe. Anschließend werden
+        sukzessive alle Zeilen die nicht als korrekte Realisierung der
+        Zufallsvariablen in Frage kommen neu gewürfelt.
+        Zuletzt wird self.mu mit den gefundenen Werten angepasst, und self.phi
+        gewürfelt.
         """
-        y = energy/.511
-        return 1./(1 + y * (1 - mu))**2 * (1 + mu**2 + ((y**2)*(1 - mu)**2)/\
-            (1 + y*(1 - mu)))
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
+
+        initial_guess = self.guess_kn(self.count)
+
+        while np.any((self.klein_nishina(initial_guess[:,0],self.energy[particle_mask]) <
+            initial_guess[:,1])[0]):
+                mask = self.klein_nishina(initial_guess[:,0],self.energy[particle_mask]) < \
+                    initial_guess[:,1]
+                initial_guess[mask] = self.guess_kn(len(self.energy[particle_mask][mask]))
+
+        self.mu[particle_mask] = initial_guess[:,0]
+        self.phi[particle_mask] = np.random.rand(self.count)*2*np.pi
 
     def guess_kn(self, count):
         """
@@ -89,87 +106,96 @@ class particles(object):
         """
         return 2 * np.random.rand(count,2) - np.array([1,0])
 
-    def get_angles(self):
+    def klein_nishina(self, mu, energy):
         """
-        Beginnt mit guess_kn() in maximaler Größe. Anschließend werden
-        sukzessive alle Zeilen die nicht als korrekte Realisierung der
-        Zufallsvariablen in Frage kommen neu gewürfelt.
-        Zuletzt wird self.mu mit den gefundenen Werten angepasst, und self.phi
-        gewürfelt.
+        Gibt den Wert der KN-Formel zu gegebenem µ und E zurück. Vorfaktoren
+        weggelassen, das wäre nur unnötige Rechnerei.
         """
+        y = energy/.511
+        return 1./(1 + y * (1 - mu))**2 * (1 + mu**2 + ((y**2)*(1 - mu)**2)/\
+            (1 + y*(1 - mu)))
 
-        initial_guess = self.guess_kn(self.count)
-
-        while np.any((self.klein_nishina(initial_guess[:,0],self.energy) <
-            initial_guess[:,1])[0]):
-                mask = self.klein_nishina(initial_guess[:,0],self.energy) < \
-                    initial_guess[:,1]
-                initial_guess[mask] = self.guess_kn(len(self.energy[mask]))
-
-        self.mu = initial_guess[:,0]
-        self.phi = np.random.rand(self.count)*2*np.pi
-
-    def mean_free(self):
-        """
-        Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
-        Werten für die Wirkungsquerschnittssumme.
-        """
-        return -1./self.total_x * np.log(np.random.rand(len(self.total_x)))
-
-    def move(self):
-        self.coords += self.direction * \
-            np.reshape(self.mean_free(),(-1,1))
-
-    def interact(self):
-        photo_mask = np.random.rand(self.count) < self.p_photo
-
-        self.weight[photo_mask] *= self.p_scatter[photo_mask]
-
-        self.get_angles()
-        self.get_direction()
-        self.E_scatter()
-
-    def E_scatter(self):
-        """
-        Aktualisiert die Teilchenenergien nach einem Stoß.
-        """
-        self.energy = self.energy / (1 + (self.energy/.511) * (1 - self.mu))
-
-    def get_direction(self):
+    def get_direction(self, particle_mask = None):
         """
         Errechnet basierend auf den ausgewürfelten Werten für phi und mu einen
         neuen Richtungsvektor für jedes Teilchen. Hierzu wird die Drehmatrix K~
         für alle ermittelten lokalen Richtungsvektoren aufgestellt und die
         Streurichtungsvektoren damit transformiert.
         """
-        self.local_direction[:,0] = self.mu
-        self.local_direction[:,1] = np.sqrt(1 - self.mu**2) * np.cos(self.phi)
-        self.local_direction[:,2] = np.sqrt(1 - self.mu**2) * np.sin(self.phi)
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
 
-        self.x_mask = (np.abs(self.direction[:,0]) == 0) * \
-            (np.abs(self.direction[:,1]) == 0)
+        self.local_direction[particle_mask][:,0] = self.mu[particle_mask]
+        self.local_direction[particle_mask][:,1] = np.sqrt(1 - self.mu[particle_mask]**2) * np.cos(self.phi[particle_mask])
+        self.local_direction[particle_mask][:,2] = np.sqrt(1 - self.mu[particle_mask]**2) * np.sin(self.phi[particle_mask])
 
-        self.y_mask = (np.abs(self.direction[:,1]) == 0)
+        self.x_mask = (np.abs(self.direction[particle_mask][:,0]) == 0) * \
+            (np.abs(self.direction[particle_mask][:,1]) == 0)
+
+        self.y_mask = (np.abs(self.direction[particle_mask][:,1]) == 0)
         else_mask = np.logical_not(np.logical_or(self.x_mask,self.y_mask))
 
 
-        self.K_tilde[:,:,0] = self.direction
-        self.K_tilde[:,:,1][self.x_mask] = [1,0,0]
-        self.K_tilde[:,:,1][self.y_mask] = [0,1,0]
+        self.K_tilde[particle_mask][:,:,0] = self.direction[particle_mask]
+        self.K_tilde[particle_mask][:,:,1][self.x_mask] = [1,0,0]
+        self.K_tilde[particle_mask][:,:,1][self.y_mask] = [0,1,0]
 
-        self.K_tilde[:,:,1][else_mask] = np.transpose(
-            np.array([1./self.direction[:,0],-1./self.direction[:,1],
+        self.K_tilde[particle_mask][:,:,1][else_mask] = np.transpose(
+            np.array([1./self.direction[particle_mask][:,0],-1./self.direction[particle_mask][:,1],
               np.zeros(self.count)]))
 
-        self.K_tilde[:,:,1] /= np.reshape(
-            np.sqrt(np.sum(self.K_tilde[:,:,1]**2,1)),(-1,1))
+        self.K_tilde[particle_mask][:,:,1] /= np.reshape(
+            np.sqrt(np.sum(self.K_tilde[particle_mask][:,:,1]**2,1)),(-1,1))
 
-        self.K_tilde[:,:,2] = np.reshape(np.cross(self.K_tilde[:,:,0],
-            self.K_tilde[:,:,1]),(-1,3))
+        self.K_tilde[particle_mask][:,:,2] = np.reshape(np.cross(self.K_tilde[particle_mask][:,:,0],
+            self.K_tilde[particle_mask][:,:,1]),(-1,3))
 
-        self.direction = np.sum(self.K_tilde * np.reshape(self.local_direction,
+        self.direction[particle_mask] = np.sum(self.K_tilde[particle_mask] * np.reshape(self.local_direction[particle_mask],
             (-1,3,1)),axis=1)
 
+    def E_scatter(self, particle_mask = None):
+        """
+        Aktualisiert die Teilchenenergien nach einem Stoß.
+        """
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
+
+        self.energy = self.energy[particle_mask] / (1 + (self.energy[particle_mask]/.511) *\
+            (1 - self.mu[particle_mask]))
+
+    def move(self, particle_mask = None):
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
+
+        self.coords[particle_mask] += self.direction[particle_mask] * \
+            np.reshape(self.mean_free(particle_mask),(-1,1))
+
+    def mean_free(self, particle_mask = None):
+        """
+        Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
+        Werten für die Wirkungsquerschnittssumme.
+        """
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
+        return -1./self.total_x[particle_mask] * np.log(np.random.rand(self.count))
+
+    def initial_move(self, particle_mask = None):
+        """
+        Dient nur dazu, die Teilchen direkt nach der Erzeugung auf um eine
+        freie Weglänge zuföllig um die Quelle verteilte Positionen zu schießen.
+        """
+        if particle_mask == None:
+            particle_mask = np.ones(self.count)
+        angles = 2*np.random.rand(self.count,2) - np.array([1,0])
+        angles[:,1] *= np.pi
+        self.mu = angles[:,0]
+
+        self.direction[:,0] = angles[:,0]
+        self.direction[:,1] = np.sqrt(1 - angles[:,0]**2) * np.cos(angles[:,1])
+        self.direction[:,2] = np.sqrt(1 - angles[:,0]**2) * np.sin(angles[:,1])
+
+        self.move()
+        self.E_scatter()
 
 class mc_exp(object):
     """
@@ -214,6 +240,8 @@ class mc_exp(object):
         self.lead = ip.interpolate("CrossSectBlei.txt",1.134)
         self.lead.set_name(1,"photo")
 
+        self.water_mask = np.ones(self.init_count)
+
         self.update_xsect()
         self.particles.initial_move()
 
@@ -223,20 +251,20 @@ class mc_exp(object):
         der particle-Instanz neu geschrieben. Wasserwerte solang innerhalb der
         Kugel, Bleiwerte außerhalb.
         """
+        self.new_lead = self.water_mask
         self.water_mask = np.sum(self.particles.coords**2,axis=1) <= 1e4
-        self.lead_mask = np.logical_not(self.water_mask)
+        self.new_lead = self.new_lead * np.logical_not(self.water_mask)
 
         self.particles.scatter[self.water_mask] = self.water.interpolate(
         self.particles.energy[self.water_mask],"scatter")
 
-        self.particles.scatter[self.lead_mask] = 0
-
+        self.particles.scatter[self.new_lead] = 0
 
         self.particles.photo[self.water_mask] = self.water.interpolate(
         self.particles.energy[self.water_mask],"photo")
 
-        self.particles.photo[self.lead_mask] = self.water.interpolate(
-        self.particles.energy[self.lead_mask],"photo")
+        self.particles.photo[self.new_lead] = self.water.interpolate(
+        self.particles.energy[self.new_lead],"photo")
 
         self.particles.total_x = self.particles.photo + self.particles.scatter
         self.particles.p_photo = self.particles.photo / self.particles.total_x
@@ -247,7 +275,7 @@ class mc_exp(object):
         """
         Bewegt die Teilchen entsprechend der experimentellen Parameter weiter.
         """
-
         self.update_xsect()
-        self.particles.interact()
-        self.particles.move()
+        self.particles.interact(self.water_mask)
+        self.particles.move(self.water_mask)
+
