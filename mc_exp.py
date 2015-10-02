@@ -15,22 +15,22 @@ class particles(object):
     Möglichkeiten zur Wechselwirkung und Bewegung bereitgestellt.
 
     Variablen:
-    self.coords: Globaler Ortsvektor
-    self.directions: Globaler Richtungsvektor
-    self.energy: Teilchenenergie
-    self.weight: Teilchenwichtung
-    self.mu: cos(Theta) für jedes Teilchen
-    self.phi: Phi für alle Teilchen
-    self.scatter: Streuquerschnitt, wird von extern verändert.
-    self.photo: Querschnitt für Photoabsorption, von extern verändert.
-    self.total_x: Summe beider Querschnittswerte.
-    self.p_scatter: Streuwahrscheinlichkeit.
-    self.p_photo: Absorptionswahrscheinlichkeit.
+    count: Anzahl an Teilchen, die aktuell von Interesse sind.
+    coords: Globaler Ortsvektor
+    directions: Globaler Richtungsvektor
+    energy: Teilchenenergie
+    weight: Teilchenwichtung
+    mu: cos(Theta) für jedes Teilchen
+    phi: Phi für alle Teilchen
+    scatter: Streuquerschnitt, wird von extern verändert.
+    photo: Querschnitt für Photoabsorption, von extern verändert.
+    total_x: Summe beider Querschnittswerte.
+    p_photo: Absorptionswahrscheinlichkeit.
 
     Funktionen:
-    E_scatter: Passt nach Streuung die Teilchenenergie an. Als Parameter muss
-    boolean-Maske übergeben werden, die angibt bei welchen Teilchen eine
-    Streuung stattfand.
+    interact:
+    E_scatter: Passt nach Streuung die Teilchenenergie an.
+
     """
     def __init__(self, number=1e5, initial_energy=.1405):
         """
@@ -65,10 +65,8 @@ class particles(object):
         else:
             self.count = np.sum(particle_mask)
 
-        photo_mask = np.random.rand(self.count) < self.p_photo[particle_mask]
-
-        self.weight[particle_mask][photo_mask] *= \
-            (1-self.p_photo[particle_mask][photo_mask])
+        self.photo_mask = (np.random.rand(len(particle_mask)) < self.p_photo) * particle_mask
+        self.weight[self.photo_mask] *= (1-self.p_photo[self.photo_mask])
 
         self.get_angles(particle_mask)
         self.get_direction(particle_mask)
@@ -167,6 +165,12 @@ class particles(object):
 
         self.energy[particle_mask] /= (1 + (self.energy[particle_mask]/.511) *\
             (1 - self.mu[particle_mask]))
+
+        for _ in vars(self):
+            try:
+                vars(self)[_] = vars(self)[_][self.energy > 1e-3]
+            except:
+                pass
 
     def move(self, particle_mask = None):
         if np.all(particle_mask) == None:
@@ -278,14 +282,14 @@ class mc_exp(object):
         self.particles.move()
         self.particles.E_scatter()
 
+
     def move_particles(self):
         """
         Bewegt die Teilchen entsprechend der experimentellen Parameter weiter.
         """
-        if np.any(self.water_mask * (self.particles.energy > 1e-3)) == True:
+        if np.any(self.water_mask) == True:
+            self.water_mask = self.water_mask[self.particles.energy > 1e-3]
             self.update_xsect()
-            self.particles.interact(self.water_mask * (self.particles.energy >\
-            1e-3))
-
+            self.particles.interact(self.water_mask)
         else:
             print("All particles outside of water sphere.")
