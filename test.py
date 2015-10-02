@@ -6,6 +6,8 @@ Testfile für die particle-Klasse.
 import mc_exp as mc
 import matplotlib.pyplot as plt
 
-test = mc.mc_exp(1e6)
-test.particles.get_angles()
-test.particles.get_direction()
+a = mc.mc_exp(1e6)
+b = a.particles
+
+while np.any(a.water_mask * (b.energy > 1e-3)):
+    a.move_particles()
