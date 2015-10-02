@@ -65,8 +65,9 @@ class particles(object):
         else:
             self.count = np.sum(particle_mask)
 
-        self.photo_mask = (np.random.rand(len(particle_mask)) < self.p_photo) * particle_mask
-        self.weight[self.photo_mask] *= (1-self.p_photo[self.photo_mask])
+        photo_mask = (np.random.rand(len(particle_mask)) < self.p_photo) * \
+            particle_mask
+        self.weight[photo_mask] *= (1-self.p_photo[photo_mask])
 
         self.get_angles(particle_mask)
         self.get_direction(particle_mask)
