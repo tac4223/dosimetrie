@@ -386,3 +386,33 @@ class mc_exp(object):
             self.particles.interact(self.water_mask)
         else:
             print("All particles outside of water sphere.")
+
+    def cull_particles(self):
+        """
+        Killt alle Teilchen, die keine Chance haben den Kollimator zu
+        erreichen (x-Komponente des Richtungs- oder Ortsvektors negativ). Nach
+        einiger Überlegung bin ich der Meinung, dass Teilchen die nach
+        Verlassen der Wasserkugel bei x < 0 stehen nicht mehr zum Kollimator
+        gelangen können... ich kann mich irren.
+        """
+        survive = (self.particles.direction[:,0] > 0) *\
+            (self.particles.coords[:,0] > 0)
+
+        for element in self.particles.properties:
+            vars(self.particles)[element] = vars(self.particles)[element]\
+                [survive]
+
+    def move_to_coll(self):
+        """
+        Setzt alle Teilchen auf die Ebene der Kollimatoroberseite, beendet
+        Trajektorien die am Kollimator vorbeilaufen.
+        """
+        self.particles.coords += np.reshape((200 - self.particles.coords[:,0])/\
+            self.particles.direction[:,0],(-1,1)) * self.particles.direction
+
+        does_hit = (np.absolute(self.particles.coords[:,1]) < 150.25) * \
+                (np.absolute(self.particles.coords[:,2]) < 150.25)
+
+        for element in self.particles.properties:
+            vars(self.particles)[element] = vars(self.particles)[element]\
+                [does_hit]
