@@ -12,12 +12,14 @@ class particles(object):
     """
     Klasse die praktische Zusammenfassung aller direkt partikelbezogenen
     Eigenschaften bietet. Darüber hinaus werden die grundsätzlichen
-    Möglichkeiten zur Wechselwirkung und Bewegung bereitgestellt.
+    Möglichkeiten zur Wechselwirkung und Bewegung bereitgestellt. Teilchen
+    werden zunächst an Ort [0,0,0] erzeugt, ohne Richtung oder Wirkungsquer-
+    schnitte.
 
-    Variablen:
+    Instanzvariablen:
     count: Anzahl an Teilchen, die aktuell von Interesse sind.
     coords: Globaler Ortsvektor
-    directions: Globaler Richtungsvektor
+    direction: Globaler Richtungsvektor
     energy: Teilchenenergie
     weight: Teilchenwichtung
     mu: cos(Theta) für jedes Teilchen
@@ -26,18 +28,42 @@ class particles(object):
     photo: Querschnitt für Photoabsorption, von extern verändert.
     total_x: Summe beider Querschnittswerte.
     p_photo: Absorptionswahrscheinlichkeit.
+    properties: Liste der Objektvariablen, exklusive Teilchenzahl. Wird von
+        Funktion cleanup verwendet.
+    min_energy: Teilchen mit Energie (MeV) unter diesem Wert werden gelöscht
+    min_weight: Mindestens verbleibendes Restgewicht, unterhalb liegende
+        Teilchen werden gelöscht.
 
     Funktionen:
-    interact:
+    interact: Einstiegsfunktion, einzige Funktion die von außerhalb aufgerufen
+        werden sollte.
+    get_angles: Erzeugt zufällig verteilte Werte für mu und phi nach der
+        Verwerfungsmethode.
+    guess_kn: "Rät" Werte für die Klein-Nishina-Funktion, um so zufällige mu
+        zu bestimmen. Verwendet in get_angles.
+    klein_nishina: Gibt (bis auf einen konstanten Faktor) den Funktionswert der
+        Klein-Nishina-Funktion zurück, zu als Input gegebenem mu und E.
+    get_direction: Erzeugt aus phi und mu "lokale" Richtungsvektoren, bezogen
+        auf die aktuelle Ausbreitungsrichtung jedes Teilchens. Anschließend
+        wird für jedes Teilchen eine Drehmatrix K_tilde erzeugt, mit der die
+        lokalen Richtungsvektoren in globale transformiert werden, sodass ein
+        neuer Wert für direction erzeugt wird.
     E_scatter: Passt nach Streuung die Teilchenenergie an.
-
+    move: Bewegt alle Teilchen um eine mittlere freie Weglänge entsprechend der
+        in direction hinterlegten Richtung weiter.
+    mean_free: Gibt ein Array mit zufällig verteilten mittleren freien
+        Weglängen zurück.
+    cleanup: Löscht Teilchen auf Basis der Mindestenergie und Mindestwichtung
+        aus allen Tabellen.
     """
-    def __init__(self, number=1e5, initial_energy=.1405):
+
+    def __init__(self, number=1e5, initial_energy=.1405, E_min=1e-3, W_min=1e-2):
         """
-        Fixiert alle aus den zwei Initialwerten abzuleitenden Werte zunächst
-        mal in Objekteigenschaften, hier passiert eigentlich nichts
-        spannendes. Alle Partikel werden bei [0,0,0] erzeugt, mit Richtung
-        [0,0,0] und ohne berechnete Wirkungsquerschnitte oder Streuwinkel.
+        number: Anzahl zu erzeugender Teilchen, default 1e5
+        initial_energy: Anfangsenergie (MeV) der Teilchen, default 0.1405
+        E_min: Energie (MeV), die Teilchen mindestens noch haben müssen um
+            weiter berechnet zu werden. default 1e-3.
+        W_min: Wichtung, unterhalb derer Teilchen gelöscht werden. default 1e.2
         """
         self.count = number
         self.coords = np.zeros((number,3))
@@ -51,14 +77,32 @@ class particles(object):
         self.total_x = 1*self.scatter
         self.p_photo = 1*self.scatter
 
+        self.properties = vars(self).keys()
+        self.properties.remove("count")
+        self.min_energy = E_min
+        self.min_weight = W_min
 
 
     def interact(self,particle_mask = None):
         """
+        particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
         Dient als Einstiegsfunktion für die Teilcheninteraktion. Übergibt allen
         anderen Funktionen die passenden Parameter, ruft sie in der richtigen
         Reihenfolge auf und wendet sie nur auf die in particle_mask gegebenen
         Teilchen an.
+
+        Bei Teilchen die einen Photoeffekt durchführen, wird die Wichtung
+        entsprechend angepasst. Je nach Wert für das Mindestgewicht bedeu-
+        tet dies sofortige Absorption oder Überleben mit neuem Gewicht.
+
+        Ruft Funktionen in Reihenfolge
+            get_angles
+            get_direction
+            E_scatter
+            move
+            cleanup
+        auf.
         """
         if np.all(particle_mask) == None:
             particle_mask = np.ones(self.count,dtype=bool)
@@ -73,14 +117,14 @@ class particles(object):
         self.get_direction(particle_mask)
         self.E_scatter(particle_mask)
         self.move(particle_mask)
+        self.cleanup()
 
     def get_angles(self, particle_mask = None):
         """
-        Beginnt mit guess_kn() in maximaler Größe. Anschließend werden
-        sukzessive alle Zeilen die nicht als korrekte Realisierung der
-        Zufallsvariablen in Frage kommen neu gewürfelt.
-        Zuletzt wird self.mu mit den gefundenen Werten angepasst, und self.phi
-        gewürfelt.
+         particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
+        Verwendet guess_kn() und klein_nishina() um mittels Verwerfungsmethode
+        neue, zufällige Einträge für self.mu und self.phi zu generieren.
         """
         if np.all(particle_mask) == None:
             particle_mask = np.ones(self.count,dtype=bool)
@@ -98,15 +142,22 @@ class particles(object):
 
     def guess_kn(self, count):
         """
+        count: int, Anzahl an Wertepaaren mu und f(mu), die geraten werden.
+
         Rät µ und klein_nishina(µ), zwecks Verwendung beim Auswürfeln von µ per
         Verwerfungsmethode. Da µ zwischen -1 und 1 liegt, der Funktionswert
         der Klein-Nishina-Formel aber zwischen 0 und 2, lassen sich beide
         auf einmal würfeln und anschließend eine Spalte um -1 verschieben.
+
+        Gibt Numpy-Array mit den gewürfelten Werten zurück.
         """
         return 2 * np.random.rand(count,2) - np.array([1,0])
 
     def klein_nishina(self, mu, energy):
         """
+        mu: Array mit Werten von -1 bis 1
+        energy: Array mit Werten für Teilchenenergie (MeV)
+
         Gibt den Wert der KN-Formel zu gegebenem µ und E zurück. Vorfaktoren
         weggelassen, das wäre nur unnötige Rechnerei.
         """
@@ -116,10 +167,22 @@ class particles(object):
 
     def get_direction(self, particle_mask = None):
         """
+         particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
+
         Errechnet basierend auf den ausgewürfelten Werten für phi und mu einen
         neuen Richtungsvektor für jedes Teilchen. Hierzu wird die Drehmatrix K~
         für alle ermittelten lokalen Richtungsvektoren aufgestellt und die
         Streurichtungsvektoren damit transformiert.
+
+        Laufzeitvariablen:
+        K_tilde: Drehmatrix, (n,3,3)-Array mit n Anzahl der aktiven Teilchen.
+        local_direction: Array mit über self.mu und self.phi bestimmten lokalen
+            Streurichtungen.
+        x,y,else_mask: Entsprechend (5)in Aufgabenstenstellung wird erkannt,
+            welche Vektoren für K_tilde[:,:,1] gesetzt werden können.
+
+        Setzt self.direction = K_tilde * local_direction (Matrixmultiplikation)
         """
         if np.all(particle_mask) == None:
             particle_mask = np.ones(self.count,dtype=bool)
@@ -159,7 +222,11 @@ class particles(object):
 
     def E_scatter(self, particle_mask = None):
         """
-        Aktualisiert die Teilchenenergien nach einem Stoß.
+         particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
+
+        Aktualisiert die Teilchenenergien nach einem Stoß. Ändert self.energy
+            auf den neuen Wert.
         """
         if np.all(particle_mask) == None:
             particle_mask = np.ones(self.count) == 1
@@ -167,21 +234,27 @@ class particles(object):
         self.energy[particle_mask] /= (1 + (self.energy[particle_mask]/.511) *\
             (1 - self.mu[particle_mask]))
 
-        for _ in vars(self):
-            try:
-                vars(self)[_] = vars(self)[_][self.energy > 1e-3]
-            except:
-                pass
-
     def move(self, particle_mask = None):
+        """
+        particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
+
+        Ruft self.mean_free() auf, bewegt Teilchen entsprechend dem return und
+            self.direction eine zufällige Strecke.
+        """
         if np.all(particle_mask) == None:
             particle_mask = np.ones(self.count,dtype=bool)
 
         self.coords[particle_mask] += self.direction[particle_mask] * \
             self.mean_free(particle_mask)
 
+
+
     def mean_free(self, particle_mask = None):
         """
+         particle_mask: Boolean Array, genau self.count Einträge. Default-Wert
+            ist ein Array das alle Teilchen aktiv setzt.
+
         Spuckt eine Runde freie Weglängen aus, basierend auf den derzeitigen
         Werten für die Wirkungsquerschnittssumme.
         """
@@ -191,6 +264,16 @@ class particles(object):
         return np.reshape(-1./self.total_x[particle_mask] * \
             np.log(np.random.rand(self.count)),(-1,1))
 
+    def cleanup(self):
+        """
+        Löscht alle Teilchen die die Kriterien in self.min_energy und
+            self.min_weight nicht mehr erfüllen.
+        """
+        cutoff = (self.energy > self.min_energy) * \
+            (self.weight > self.min_weight)
+        for element in self.properties:
+                vars(self)[element] = vars(self)[element][cutoff]
+
 class mc_exp(object):
     """
     Enthält das eigentliche Experiment, inklusive des Vorwissens über den
@@ -199,6 +282,9 @@ class mc_exp(object):
 
     Variablen:
     self.init_E: Anfangsenergie die allen Teilchen mitgegeben wird.
+    self.init_count: Die anfängliche Zahl an Teilchen.
+    self.new_lead: Maske, die alle Teilchen markiert die im letzten
+        Iterationsschritt die Wasserkugel verlassen haben.
 
     Instanzen:
     self.water: interpolate-Instanz mit Wasserdaten.
@@ -210,8 +296,13 @@ class mc_exp(object):
     für das jeweilig umgebende Material (Wasser innerhalb der Kugel, Blei außer-
     halb).
     """
-    def __init__(self, number_of_particles=1e5, initial_energy=0.1405):
+    def __init__(self, number_of_particles=1e5, initial_energy=0.1405, E=1e-3, W=1e-2):
         """
+        number_of_particles: Anzahl zu simulierender Teilchen, default 1e5
+        initial_energy: Anfangsenergie (MeV), default 0.1405
+        E: Mindestenergie für Teilchenüberleben, default 1e-3
+        W: Mindestgewicht für Teilchenüberleben, default 1e-2
+
         Input sanitizing, Erstellen der interpolate- und particle-Instanzen.
         Dichte von Wasser und Blei wird absichtlich um eine Größenordnung zu
         niedrig angegeben, um quasi implizit auf 1/mm für den
@@ -226,7 +317,7 @@ class mc_exp(object):
         self.init_E = initial_energy
         self.init_count = number_of_particles
 
-        self.particles = particles(number_of_particles,self.init_E)
+        self.particles = particles(number_of_particles,self.init_E,E,W)
 
         self.water = ip.interpolate("CrossSectWasser.txt",.1)
         self.water.set_name(1,"scatter")
@@ -247,7 +338,7 @@ class mc_exp(object):
         """
         self.new_lead = self.water_mask
         self.water_mask = np.sum(self.particles.coords**2,axis=1) <= 1e4
-        self.new_lead = self.new_lead * np.logical_not(self.water_mask)
+        self.new_lead *= np.logical_not(self.water_mask)
 
         self.particles.scatter[self.water_mask] = self.water.interpolate(
         self.particles.energy[self.water_mask],"scatter")
@@ -289,7 +380,8 @@ class mc_exp(object):
         Bewegt die Teilchen entsprechend der experimentellen Parameter weiter.
         """
         if np.any(self.water_mask) == True:
-            self.water_mask = self.water_mask[self.particles.energy > 1e-3]
+            self.water_mask = self.water_mask[(self.particles.energy > 1e-3) *
+                (self.particles.weight > 1e-2)]
             self.update_xsect()
             self.particles.interact(self.water_mask)
         else:
