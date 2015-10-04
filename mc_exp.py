@@ -380,8 +380,9 @@ class mc_exp(object):
         Bewegt die Teilchen entsprechend der experimentellen Parameter weiter.
         """
         if np.any(self.water_mask) == True:
-            self.water_mask = self.water_mask[(self.particles.energy > 1e-3) *
-                (self.particles.weight > 1e-2)]
+            self.water_mask = self.water_mask[(self.particles.energy >
+                self.particles.min_energy) *
+                (self.particles.weight > self.particles.min_weight)]
             self.update_xsect()
             self.particles.interact(self.water_mask)
         else:
@@ -405,14 +406,54 @@ class mc_exp(object):
     def move_to_coll(self):
         """
         Setzt alle Teilchen auf die Ebene der Kollimatoroberseite, beendet
-        Trajektorien die am Kollimator vorbeilaufen.
+        Trajektorien die am "Detektor" vorbeilaufen.
         """
-        self.particles.coords += np.reshape((200 - self.particles.coords[:,0])/\
+        self.particles.coords += np.reshape((200 - self.particles.coords[:,0])/
             self.particles.direction[:,0],(-1,1)) * self.particles.direction
 
-        does_hit = (np.absolute(self.particles.coords[:,1]) < 150.25) * \
-                (np.absolute(self.particles.coords[:,2]) < 150.25)
+        self.colhit_ratio = np.sum(self.particles.weight[(np.absolute(
+            self.particles.coords[:,1]) < 150.25) *
+            (np.absolute(self.particles.coords[:,2]) < 150.25)])/self.init_count
+
+        self.particles.coords += np.reshape((235 - self.particles.coords[:,0])/
+            self.particles.direction[:,0],(-1,1)) * self.particles.direction
+
+        does_hit = (np.absolute(
+            self.particles.coords[:,1]) < 150.25) * \
+            (np.absolute(self.particles.coords[:,2]) < 150.25)
 
         for element in self.particles.properties:
             vars(self.particles)[element] = vars(self.particles)[element]\
                 [does_hit]
+
+        self.under_coll = self.particles.coords + np.reshape(
+            (225 - self.particles.coords[:,0])/\
+            self.particles.direction[:,0],(-1,1)) * self.particles.direction
+
+        self.over_coll = self.particles.coords + np.reshape(
+            (200 - self.particles.coords[:,0])/\
+            self.particles.direction[:,0],(-1,1)) * self.particles.direction
+
+        self.colpath_dir = self.under_coll - self.over_coll
+        self.colpath_val = np.reshape(np.sqrt(np.sum(self.colpath_dir**2,1)),(-1,1))
+        self.colpath_dir /= self.colpath_val
+
+        self.particles.count = len(self.particles.coords)
+
+    def lead_length(self, steps):
+        steps *= 1.
+        self.current_pos = self.over_coll
+        stepsize = self.colpath_val/steps
+        lead_count = np.zeros(self.particles.count)
+        for step in np.arange(steps):
+            self.current_pos += stepsize * self.colpath_dir
+            lead_count += self.is_lead()
+        self.lead_ratio = lead_count/steps
+
+    def is_lead(self):
+        scaled_pos = np.abs(self.current_pos[:,1::]) % 3
+        y = (scaled_pos[:,0] > 0.25) * (scaled_pos[:,0] < 2.75)
+        z = (scaled_pos[:,1] > 0.25) * (scaled_pos[:,1] < 2.75)
+        return np.logical_not(y * z)
+
+
