@@ -7,6 +7,7 @@ Created on Fri Sep 11 18:57:15 2015
 
 import numpy as np
 import interpolate as ip
+import matplotlib.pyplot as plt
 
 class particles(object):
     """
@@ -372,8 +373,7 @@ class mc_exp(object):
             np.sin(angles[:,1])
 
         self.particles.move()
-        self.particles.E_scatter()
-
+#        self.particles.E_scatter()
 
     def move_particles(self):
         """
@@ -448,7 +448,9 @@ class mc_exp(object):
         for step in np.arange(steps):
             self.current_pos += stepsize * self.colpath_dir
             lead_count += self.is_lead()
-        self.lead_ratio = lead_count/steps
+        self.lead_ratio = np.reshape(lead_count/steps,(-1,1))
+        self.lead_thickness = self.colpath_val * self.lead_ratio
+
 
     def is_lead(self):
         scaled_pos = np.abs(self.current_pos[:,1::]) % 3
@@ -457,3 +459,35 @@ class mc_exp(object):
         return np.logical_not(y * z)
 
 
+    def poll_1(self):
+        self.q1 = np.round(np.sum((self.particles.coords[:,1] < self.particles.coords[:,0]*
+        (150.25/200)) * (self.particles.coords[:,2] <
+        self.particles.coords[:,0]*(150.25/200)))/self.init_count*100,2)
+        print("Initial in Raumwinkel emittierte Photonen: {0}%".format(self.q1))
+
+    def poll_2(self):
+        self.q2 = np.round(np.sum(self.particles.weight)/self.init_count*100,2)
+        print("Anteil an Photonen die die Wasserkugel verlassen: {0}%".format(self.q2))
+
+    def poll_3(self):
+        self.q3 = np.round(self.colhit_ratio*100.,2)
+        print("Anteil an Photonen die auf Kollimator auftreffen: {0}%".format(self.q3))
+
+    def poll_4(self):
+        self.survivors = (self.lead_thickness < self.particles.mean_free()).flatten()
+        self.q4 = np.round(np.sum(self.survivors)/self.init_count*100,2)
+        print("Anteil an Photonen die sowohl durch Kollimator gelangen als auch auf Detektor auftreffen: {0}%".format(self.q4))
+
+    def plot(self):
+        self.inner = (np.sqrt(np.sum(self.particles.coords[:,1::]**2,1)) < 40) * self.survivors
+        plt.figure()
+        plt.hist(self.particles.energy[self.inner]*1e3,bins=50)
+        plt.xlabel("E / keV")
+        plt.ylabel("Anzahl")
+        plt.savefig("inner.png")
+
+        plt.figure()
+        plt.hist(self.particles.energy[np.logical_not(self.inner)]*1e3,bins=50)
+        plt.xlabel("E / keV")
+        plt.ylabel("Anzahl")
+        plt.savefig("outer.png")
