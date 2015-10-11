@@ -1,11 +1,58 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Sep 11 18:57:15 2015
+Objekt zum einfachen Interpolieren von Querschnitten bei gegebener Energie.
+Wird initialisiert mit Dateinamen einer Tabelle entsprechender Querschnitte.
+Ferner müssen die einzelnen Spalten mit Namen belegt werden, um bei Tabellen
+mit mehreren Spalten Verwechslungen auszuschließen.
 
-@author: xerol
+Variablen
+self.data: Enthält die Daten zwischen denen interpoliert werden soll.
+self.colnames: Dictionary, das zwischen tatsächlich merkbaren Bezeichnungen und
+den Spaltennummern vermittelt.
+
+Funktionen
+self.set_name(): Zuordnung von Spaltenzahlen und deren Bezeichnung.
+self.interpolate(): Die eigentliche Interpolation. Wird von außen mit einem x-
+Wert und einer Spaltenbezeichnung aufgerufen.
 """
-
 import numpy as np
+
+class interpolate(object):
+
+    def __init__(self, data, density=1, headersize=3):
+        """
+        Schlichte Initialisierung. Als Data wird der Dateiname eines Textfiles
+        übergeben, in dem die zu interpolierenden Daten enthalten sind.
+        Density kann für Wirkungsquerschnitte übergeben werden, Werte werden
+        damit multipliziert (default 1). Headersize gibt die Anzahl an
+        Kopfzeilen an, die übersprungen werden müssen um zum Beginn der
+        Zahlenwerte zu kommen.
+        """
+        self.data = np.loadtxt(data,skiprows=headersize)
+        self.data[:,1::] *= density
+        self.colnames = {}
+
+    def set_name(self,column,name):
+        """
+        Sollte ausgeführt werden um von schlicht durchnummerierten Spalten zu
+        sprechenden Namen zu kommen. Namen werden in self.interpolate() ver-
+        wendet.
+        """
+        self.colnames[name] = column
+
+    def interpolate(self, energy, y_col=1):
+        """
+        Sollte self.colnames leer sein, wird einfach nur die erste Spalte als
+        x- und die zweite Spalte als y-Wert genommen zum Interpolieren.
+        Falls self.colnames existiert, wird die korrekte Spalte entsprechend
+        des angegebenen Namens ausgewählt.
+        """
+        if self.colnames:
+            return np.interp(energy, self.data[:,0],
+                             self.data[:,self.colnames[y_col]])
+        return np.interp(energy, self.data[:,0],
+                             self.data[:,1])
+
 import interpolate as ip
 import matplotlib.pyplot as plt
 
@@ -18,22 +65,25 @@ class particles(object):
     schnitte.
 
     Instanzvariablen:
-    count: Anzahl an Teilchen, die aktuell von Interesse sind.
     coords: Globaler Ortsvektor
+    count: Anzahl an Teilchen, die aktuell von Interesse sind.
     direction: Globaler Richtungsvektor
     energy: Teilchenenergie
-    weight: Teilchenwichtung
-    mu: cos(Theta) für jedes Teilchen
-    phi: Phi für alle Teilchen
-    scatter: Streuquerschnitt, wird von extern verändert.
-    photo: Querschnitt für Photoabsorption, von extern verändert.
-    total_x: Summe beider Querschnittswerte.
-    p_photo: Absorptionswahrscheinlichkeit.
-    properties: Liste der Objektvariablen, exklusive Teilchenzahl. Wird von
-        Funktion cleanup verwendet.
     min_energy: Teilchen mit Energie (MeV) unter diesem Wert werden gelöscht
     min_weight: Mindestens verbleibendes Restgewicht, unterhalb liegende
         Teilchen werden gelöscht.
+    mu: cos(Theta) für jedes Teilchen
+    p_photo: Absorptionswahrscheinlichkeit.
+    phi: Phi für alle Teilchen
+    photo: Querschnitt für Photoabsorption, von extern verändert.
+    properties: Liste der Objektvariablen, exklusive Teilchenzahl. Wird von
+        Funktion cleanup verwendet.
+    scatter: Streuquerschnitt, wird von extern verändert.
+    total_x: Summe beider Querschnittswerte.
+    weight: Teilchenwichtung
+
+
+
 
     Funktionen:
     interact: Einstiegsfunktion, einzige Funktion die von außerhalb aufgerufen
@@ -297,7 +347,8 @@ class mc_exp(object):
     für das jeweilig umgebende Material (Wasser innerhalb der Kugel, Blei außer-
     halb).
     """
-    def __init__(self, number_of_particles=1e5, initial_energy=0.1405, E=1e-3, W=1e-2):
+    def __init__(self, number_of_particles=1e5, initial_energy=0.1405, E=1e-3,
+            W=1e-2):
         """
         number_of_particles: Anzahl zu simulierender Teilchen, default 1e5
         initial_energy: Anfangsenergie (MeV), default 0.1405
@@ -373,7 +424,6 @@ class mc_exp(object):
             np.sin(angles[:,1])
 
         self.particles.move()
-#        self.particles.E_scatter()
 
     def move_particles(self):
         """
@@ -407,6 +457,9 @@ class mc_exp(object):
         """
         Setzt alle Teilchen auf die Ebene der Kollimatoroberseite, beendet
         Trajektorien die am "Detektor" vorbeilaufen.
+
+        Ferner werden die Teilchenposition oberhalb des Kollimators, unterhalb
+        des Kollimators und in der Detektorebene gespeichert.
         """
         self.particles.coords += np.reshape((200 - self.particles.coords[:,0])/
             self.particles.direction[:,0],(-1,1)) * self.particles.direction
@@ -435,12 +488,24 @@ class mc_exp(object):
             self.particles.direction[:,0],(-1,1)) * self.particles.direction
 
         self.colpath_dir = self.under_coll - self.over_coll
-        self.colpath_val = np.reshape(np.sqrt(np.sum(self.colpath_dir**2,1)),(-1,1))
+        self.colpath_val = np.reshape(np.sqrt(np.sum(self.colpath_dir**2,1)),
+           (-1,1))
         self.colpath_dir /= self.colpath_val
 
         self.particles.count = len(self.particles.coords)
 
     def lead_length(self, steps):
+        """
+        Da mir die Zeit für eine mundgemalte analytische Lösung fehlt, hier
+        eine langsame, hässliche und ungenaue Methode. Es lebe die
+        Diskretisierung!
+
+        steps: Anzahl der Schritte, in die die Wegstrecke von Kollimatorober-
+        zu unterseite eingeteilt wird. Läuft einen kleinen Schritt, prüft ob
+        sich Teilchen in Blei befinden, läuft weiter. Hieraus berechnet sich
+        ein Verhältnis Blei zu Luft, mittels dessen dann die Entscheidung fällt
+        ob Teilchen absorbiert werden.
+        """
         steps *= 1.
         self.current_pos = self.over_coll
         stepsize = self.colpath_val/steps
@@ -453,6 +518,11 @@ class mc_exp(object):
 
 
     def is_lead(self):
+        """
+        Prüft, ob sich derzeit Teilchen innerhalb von Bleisepten aufhalten.
+        Das Kollimatorraster hat eine "Wiederholrate" von 3 cm, daher wird
+        mod3 verwendet um die Prüfung leichter handhabbar zu machen.
+        """
         scaled_pos = np.abs(self.current_pos[:,1::]) % 3
         y = (scaled_pos[:,0] > 0.25) * (scaled_pos[:,0] < 2.75)
         z = (scaled_pos[:,1] > 0.25) * (scaled_pos[:,1] < 2.75)
@@ -460,34 +530,102 @@ class mc_exp(object):
 
 
     def poll_1(self):
-        self.q1 = np.round(np.sum((self.particles.coords[:,1] < self.particles.coords[:,0]*
-        (150.25/200)) * (self.particles.coords[:,2] <
-        self.particles.coords[:,0]*(150.25/200)))/self.init_count*100,2)
-        print("Initial in Raumwinkel emittierte Photonen: {0}%".format(self.q1))
+        """
+        Sammelt Daten für Aufgabe a) und gibt die entsprechende Prozentzahl
+        aus.
+        """
+        self.q1 = np.round(np.sum((np.abs(
+        self.particles.coords[:,1]) < self.particles.coords[:,0] * (150.25/200))
+            * (np.abs(self.particles.coords[:,2]) <
+            self.particles.coords[:,0]*(150.25/200)) *
+            (self.particles.coords[:,0] > 0))/self.init_count*100,2)
+
+        print("Initial in Raumwinkel emittierte Photonen: {0}%".
+            format(self.q1))
 
     def poll_2(self):
+        """
+        Sammelt Daten für Aufgabe b) und gibt die entsprechende Prozentzahl
+        aus.
+        """
         self.q2 = np.round(np.sum(self.particles.weight)/self.init_count*100,2)
-        print("Anteil an Photonen die die Wasserkugel verlassen: {0}%".format(self.q2))
+        print("Anteil an Photonen die die Wasserkugel verlassen: {0}%".
+            format(self.q2))
 
     def poll_3(self):
+        """
+        Sammelt Daten für Aufgabe c) und gibt die entsprechende Prozentzahl
+        aus.
+        """
         self.q3 = np.round(self.colhit_ratio*100.,2)
-        print("Anteil an Photonen die auf Kollimator auftreffen: {0}%".format(self.q3))
+        print("Anteil an Photonen die auf Kollimator auftreffen: {0}%".
+            format(self.q3))
 
     def poll_4(self):
-        self.survivors = (self.lead_thickness < self.particles.mean_free()).flatten()
+        """
+        Sammelt Daten für Aufgabe d) und gibt die entsprechende Prozentzahl
+        aus.
+        """
+        self.survivors = (self.lead_thickness < self.particles.mean_free()).\
+            flatten()
         self.q4 = np.round(np.sum(self.survivors)/self.init_count*100,2)
-        print("Anteil an Photonen die sowohl durch Kollimator gelangen als auch auf Detektor auftreffen: {0}%".format(self.q4))
+        print("Anteil an Photonen die sowohl durch Kollimator gelangen als "\
+            "auch auf Detektor auftreffen: {0}%".format(self.q4))
 
     def plot(self):
-        self.inner = (np.sqrt(np.sum(self.particles.coords[:,1::]**2,1)) < 40) * self.survivors
+        """
+        Gibt die räumliche Verteilung sowie die Energiespektren der Bereiche
+        innerhalb eines 4 cm Radius um den Nullpunkt und außerhalb dessen
+        in Konsole und Datei aus.
+        """
+        plt.figure()
+        plt.hist2d(self.particles.coords[:,1],self.particles.coords[:,2],
+                   bins=100)
+        plt.colorbar()
+        plt.title("Verteilung auf Detektor")
+        plt.xlabel("y-Position")
+        plt.ylabel("z-Position")
+        plt.savefig("distribution.png")
+
+        self.inner = (np.sqrt(np.sum(self.particles.coords[:,1::]**2,1)) < 40)\
+            * self.survivors
         plt.figure()
         plt.hist(self.particles.energy[self.inner]*1e3,bins=50)
+        plt.title("Spektrum in 4 cm Radius")
         plt.xlabel("E / keV")
         plt.ylabel("Anzahl")
         plt.savefig("inner.png")
 
         plt.figure()
         plt.hist(self.particles.energy[np.logical_not(self.inner)]*1e3,bins=50)
+        plt.title("Spektrum ausserhalb")
         plt.xlabel("E / keV")
         plt.ylabel("Anzahl")
         plt.savefig("outer.png")
+
+
+"""
+Und los gehts, alles aufrufen und starten! Wohoooo!
+"""
+import mc_exp as mc
+
+print("Beginne Simulation, erzeuge Startarrays...")
+a = mc.mc_exp(1e7, W=.99)
+b = a.particles
+a.poll_1()
+
+print("Beginne Bewegung in Wasser, Fortschritt\n0%")
+while b.count:
+    a.move_particles()
+    print("{0}%".format((1 - np.sum(a.water_mask)/float(len(a.water_mask)))*
+        100))
+
+a.poll_2()
+a.cull_particles()
+a.move_to_coll()
+a.poll_3()
+
+a.lead_length(5e3)
+
+a.poll_4()
+a.plot()

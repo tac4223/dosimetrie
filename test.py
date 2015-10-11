@@ -4,7 +4,6 @@ Testfile für die particle-Klasse.
 """
 
 import mc_exp as mc
-import matplotlib.pyplot as plt
 import numpy as np
 
 print("Beginne Simulation, erzeuge Startarrays...")
@@ -22,7 +21,6 @@ a.cull_particles()
 a.move_to_coll()
 a.poll_3()
 
-print("Starte Passage durch Kollimator...")
 a.lead_length(5e3)
 
 a.poll_4()
