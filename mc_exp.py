@@ -6,14 +6,14 @@ Ferner müssen die einzelnen Spalten mit Namen belegt werden, um bei Tabellen
 mit mehreren Spalten Verwechslungen auszuschließen.
 
 Variablen
-self.data: Enthält die Daten zwischen denen interpoliert werden soll.
-self.colnames: Dictionary, das zwischen tatsächlich merkbaren Bezeichnungen und
-den Spaltennummern vermittelt.
+data: Enthält die Daten zwischen denen interpoliert werden soll.
+colnames: Dictionary, das zwischen tatsächlich merkbaren Bezeichnungen und
+    den Spaltennummern vermittelt.
 
 Funktionen
-self.set_name(): Zuordnung von Spaltenzahlen und deren Bezeichnung.
-self.interpolate(): Die eigentliche Interpolation. Wird von außen mit einem x-
-Wert und einer Spaltenbezeichnung aufgerufen.
+set_name(): Zuordnung von Spaltenzahlen und deren Bezeichnung.
+interpolate(): Die eigentliche Interpolation. Wird von außen mit einem x-
+    Wert und einer Spaltenbezeichnung aufgerufen.
 """
 import numpy as np
 
@@ -108,7 +108,8 @@ class particles(object):
         aus allen Tabellen.
     """
 
-    def __init__(self, number=1e5, initial_energy=.1405, E_min=1e-3, W_min=1e-2):
+    def __init__(self, number=1e5, initial_energy=.1405,
+                 E_min=1e-3, W_min=1e-2):
         """
         number: Anzahl zu erzeugender Teilchen, default 1e5
         initial_energy: Anfangsenergie (MeV) der Teilchen, default 0.1405
@@ -332,20 +333,61 @@ class mc_exp(object):
     Sanitizing für die anderen Klassen statt.
 
     Variablen:
-    self.init_E: Anfangsenergie die allen Teilchen mitgegeben wird.
-    self.init_count: Die anfängliche Zahl an Teilchen.
-    self.new_lead: Maske, die alle Teilchen markiert die im letzten
+    init_E: Anfangsenergie die allen Teilchen mitgegeben wird.
+    init_count: Die anfängliche Zahl an Teilchen.
+    new_lead: Maske, die alle Teilchen markiert die im letzten
         Iterationsschritt die Wasserkugel verlassen haben.
+    water_mask: Maske für alle Teilchen die sich derzeit noch im Wasser
+        aufhalten.
+    q1: Anteil an Photonen die initial in Kollimator-Raumwinkel emittiert
+        werden.
+    q2: Anteil an Photonen die die Wasserkugel verlassen
+    q3: Anteil der auf Kollimator trifft.
+    q4: Anteil der durch Kollimator tritt und anschließend auf Detektor landet.
+    survivors: Maske für alle Teilchen die es durch Kollimator schaffen und in
+        Detektor landen.
+    colpath_val: Betrag der Richtungsvektoren aller Teilchen durch den
+        Kollimator
+    colpath_dir: Richtungsvektor aller Teilchen durch den Kollimator.
+    current_pos: Aktuelle Position der Teilchen innerhalb des Kollimators.
+    under_coll: Ortsvektoren aller Teilchen an Kollimatorunterkante.
+    colhit_ratio: Quasi identisch zu q3, aber als Dezimalwert.
+    over_voll: Ortsvektoren aller Teilchen über dem Kollimator.
+    inner: Maske um Teilchen innerhalb des 4 cm Radius auf Detektor auszuwählen
+    lead_ratio: Verhältnis von Wegstrecke in Blei zu Wegstrecke in Luft im
+        Kollimator.
+    lead_thickness: Die aus lead_ratio und colpath_val berechnete durchflogene
+        Bleidicke.
 
     Instanzen:
-    self.water: interpolate-Instanz mit Wasserdaten.
-    self.lead: interpolate-Instanz mit Bleidaten.
-    self.particles: particles-Instanz.
+    water: interpolate-Instanz mit Wasserdaten.
+    lead: interpolate-Instanz mit Bleidaten.
+    particles: particles-Instanz.
 
     Funktionen:
-    self.update_xsect: Überschreibt die Einträge für Querschnitte mit jenen
-    für das jeweilig umgebende Material (Wasser innerhalb der Kugel, Blei außer-
-    halb).
+    update_xsect: Überschreibt die Einträge für Querschnitte mit jenen
+        für das jeweilig umgebende Material (Wasser innerhalb der Kugel, Blei außer-
+        halb).
+    initial_move: Verteilt die Teilchen zu Beginn zufällig um eine freie Weg-
+        länge um die Tc-Quelle.
+    move_particles: Ruft alle bewegungsrelevanten Funktionen mit der Maske
+        aller Teilchen auf, die noch im Wasser sind. Löst quasi einen
+        Bewegungsschritt aus.
+    cull_particles: Um Berechnung etwas schneller zu machen, werden alle
+        Teilchen gelöscht die keine Chance haben den Kollimator zu erreichen.
+    move_to_coll: Bewegt Teilchen die es aus der Wasserkugel geschafft haben
+        und zumindest grob in die Richtung des Detektors fliegen auf Höhe
+        der Kollimatoroberseite. Teilchen die dann doch nicht treffen werden
+        gelöscht.
+    lead_length: Bewegt die Teilchen Stück für Stück durch den Kollimator,
+        zeichnet auf welcher Anteil der Strecke in Blei zurückgelegt wird.
+        Berechnet daraus die Bleidicke im Weg.
+    is_lead: Prüft, ob sich derzeit Teilchen in Blei befinden.
+    poll_1 bis 4: Sollen Fragen 1 bis 4 beantworten.
+    plot: gibt die Energiespektren sowie die räumliche Verteilung der Photonen
+        auf dem Detektor aus.
+
+
     """
     def __init__(self, number_of_particles=1e5, initial_energy=0.1405, E=1e-3,
             W=1e-2):
@@ -436,7 +478,7 @@ class mc_exp(object):
             self.update_xsect()
             self.particles.interact(self.water_mask)
         else:
-            print("All particles outside of water sphere.")
+            print("Nothing to move: All particles outside of water sphere.")
 
     def cull_particles(self):
         """
@@ -452,6 +494,16 @@ class mc_exp(object):
         for element in self.particles.properties:
             vars(self.particles)[element] = vars(self.particles)[element]\
                 [survive]
+
+    def out_of_water(self):
+        """
+        Bewegt solange alle Teilchen weiter, bis alle aus der Wasserkugel
+        entkommen sind oder durch Abbruchkriterien gelöscht.
+        """
+        while self.particles.count:
+            self.move_particles()
+            print("{0}%".format((1 - np.sum(self.water_mask)/
+                float(len(self.water_mask)))*100))
 
     def move_to_coll(self):
         """
@@ -607,25 +659,25 @@ class mc_exp(object):
 """
 Und los gehts, alles aufrufen und starten! Wohoooo!
 """
-import mc_exp as mc
+#import mc_exp as mc
+import datetime as dt
 
-print("Beginne Simulation, erzeuge Startarrays...")
-a = mc.mc_exp(1e7, W=.99)
-b = a.particles
-a.poll_1()
+print("Beginne Simulation um {0}, erzeuge Startarrays...".
+    format(dt.datetime.now()))
+casino = mc_exp(1e5, W=.99)
+casino.poll_1()
 
 print("Beginne Bewegung in Wasser, Fortschritt\n0%")
-while b.count:
-    a.move_particles()
-    print("{0}%".format((1 - np.sum(a.water_mask)/float(len(a.water_mask)))*
-        100))
+casino.out_of_water()
 
-a.poll_2()
-a.cull_particles()
-a.move_to_coll()
-a.poll_3()
+casino.poll_2()
+casino.cull_particles()
+casino.move_to_coll()
+casino.poll_3()
 
-a.lead_length(5e3)
+casino.lead_length(5e3)
 
-a.poll_4()
-a.plot()
+casino.poll_4()
+casino.plot()
+
+print("Simulation fertig um {0}".format(dt.datetime.now()))
